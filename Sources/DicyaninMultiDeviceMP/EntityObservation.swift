@@ -38,9 +38,6 @@ public class EntityObservation {
         self.rootEntity = rootEntity
         self.onDataReceived = onDataReceived
         observeEntity(rootEntity)
-        
-        SyncComponent.registerComponent()
-        SyncModelComponent.registerComponent()
     }
     
     deinit {
@@ -258,5 +255,52 @@ public struct SyncTransform: Codable {
             rotation: simd_quatf(vector: rotation),
             translation: translation
         )
+    }
+}
+
+// MARK: - Entity Extension
+
+public extension Entity {
+    /// Configures an entity for model synchronization across devices.
+    /// - Parameters:
+    ///   - modelURL: The URL of the 3D model to load
+    ///   - manager: The MultiDeviceManager instance
+    ///   - rootEntity: The root entity to add this entity to
+    /// - Returns: The configured entity
+    @discardableResult
+    func configureModelForSync(modelURL: URL, manager: MultiDeviceManager, rootEntity: Entity) -> Entity {
+        // Ensure entity has a name if not set
+        if name.isEmpty {
+            name = "Model_\(UUID().uuidString)"
+        }
+        
+        // Add sync component
+        components.set(SyncComponent(id: name))
+        
+        // Load and configure model
+        if let modelData = try? Data(contentsOf: modelURL) {
+            // Add model component
+            components.set(SyncModelComponent(modelData: modelData))
+            
+            // Add to root
+            rootEntity.addChild(self)
+            
+            // Broadcast initial state with model data
+            if let entityObservation = manager.entityObservation {
+                let transform = SyncTransform(from: transform)
+                entityObservation.broadcastTransform(for: self, transform: transform, includeModel: true)
+            }
+        }
+        
+        return self
+    }
+    
+    /// Broadcasts a transform update for this entity.
+    /// - Parameter manager: The MultiDeviceManager instance
+    func broadcastTransformUpdate(manager: MultiDeviceManager) {
+        if let entityObservation = manager.entityObservation {
+            let transform = SyncTransform(from: transform)
+            entityObservation.broadcastTransform(for: self, transform: transform)
+        }
     }
 } 

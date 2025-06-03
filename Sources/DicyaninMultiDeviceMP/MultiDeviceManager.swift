@@ -40,6 +40,11 @@ public class MultiDeviceManager: NSObject, ObservableObject {
         setupSession()
     }
     
+    public static func registerComponents() {
+        SyncComponent.registerComponent()
+        SyncModelComponent.registerComponent()
+    }
+    
     public func getSession() -> MCSession? {
         return session
     }

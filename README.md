@@ -1,4 +1,6 @@
-# DicyaninMultiDeviceMP
+# DicyaninMultiDeviceMP 🎮 🔄 🌐
+
+> Create stunning multi-device AR/VR experiences with ease! This powerful Swift package enables seamless synchronization of 3D content across Apple devices, making it perfect for collaborative AR applications, interactive presentations, and immersive multi-user experiences. Built on top of RealityKit and MultipeerConnectivity, it handles all the complex networking and synchronization logic so you can focus on creating amazing experiences. 🚀
 
 A Swift package for synchronizing 3D content across multiple Apple devices using MultipeerConnectivity framework. This package provides the foundation for creating shared AR/VR experiences between visionOS and iOS devices.
 
@@ -82,6 +84,83 @@ if let entityObservation = manager.entityObservation {
     entityObservation.broadcastTransform(for: entity, transform: transform)
 }
 ```
+
+### Synchronizing 3D Models
+
+To synchronize 3D models across devices, use the `configureModelForSync` helper method:
+
+```swift
+// Create an entity with a 3D model
+let entity = Entity()
+
+// Configure for sync with a model
+if let modelURL = Bundle.main.url(forResource: "MyModel", withExtension: "usdz") {
+    entity.configureModelForSync(modelURL: modelURL, manager: manager, rootEntity: rootEntity)
+}
+
+// For subsequent transform updates, use the helper method
+entity.broadcastTransformUpdate(manager: manager)
+```
+
+The helper methods handle all the necessary setup:
+- Adding sync components
+- Loading and configuring the model
+- Broadcasting the initial state with model data
+- Providing a simple way to broadcast transform updates
+
+### Interactive Transform Updates
+
+Here's a complete example of a RealityView that includes draggable, synchronized entities:
+
+```swift
+struct ContentView: View {
+    @StateObject private var manager = MultiDeviceManager(displayName: "MyApp")
+    
+    var body: some View {
+        RealityView { content in
+            // Create root entity for synchronization
+            let rootEntity = Entity()
+            rootEntity.name = "SyncRoot"
+            content.add(rootEntity)
+            
+            // Start observing the root entity
+            manager.startObserving(rootEntity: rootEntity)
+            
+            // Create and configure a draggable entity
+            if let modelURL = Bundle.main.url(forResource: "MyModel", withExtension: "usdz") {
+                let entity = Entity()
+                entity.configureModelForSync(modelURL: modelURL, manager: manager, rootEntity: rootEntity)
+            }
+        } update: { content in
+            // Update content if needed
+        }
+        .gesture(
+            DragGesture()
+                .targetedToAnyEntity()
+                .onChanged { value in
+                    if let entity = value.entity {
+                        // Update entity position
+                        entity.position = value.translation
+                        
+                        // Broadcast the update to other devices
+                        entity.broadcastTransformUpdate(manager: manager)
+                    }
+                }
+        )
+        .overlay(alignment: .bottom) {
+            MultiDeviceConnectionView(displayName: manager.displayName)
+                .background(.ultraThinMaterial)
+        }
+    }
+}
+```
+
+This example shows:
+- Setting up a synchronized RealityView
+- Creating and configuring entities with models
+- Handling drag gestures to update positions
+- Broadcasting position updates to other devices
+- Displaying the connection status
 
 ### Connection Management
 
