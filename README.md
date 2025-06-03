@@ -1,8 +1,18 @@
+![DicyaninMultiPeer Banner](assets/banner.png)
+
 # DicyaninMultiPeer 🎮 🔄 🌐
 
 > Create stunning multi-device AR/VR experiences with ease! This powerful Swift package enables seamless synchronization of 3D content across Apple devices, making it perfect for collaborative AR applications, interactive presentations, and immersive multi-user experiences. Built on top of RealityKit and MultipeerConnectivity, it handles all the complex networking and synchronization logic so you can focus on creating amazing experiences. 🚀
 
 A Swift package for synchronizing 3D content across multiple Apple devices using MultipeerConnectivity framework. This package provides the foundation for creating shared AR/VR experiences between visionOS and iOS devices.
+
+## Example Project
+
+Check out the [example project](https://github.com/hunterh37/DicyaninPackagesExampleProjects/tree/master/DicyaninPlayground005-MultiPeer) to see how to implement multi-device synchronization in your own apps. The example demonstrates:
+- Setting up device connections
+- Synchronizing 3D models
+- Handling real-time interactions
+- Managing multi-device state
 
 ## Features
 
