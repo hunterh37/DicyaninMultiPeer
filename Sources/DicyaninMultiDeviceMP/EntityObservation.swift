@@ -71,17 +71,18 @@ public class EntityObservation {
         }
     }
     
-    public func broadcastTransform(for entity: Entity, transform: SyncTransform) {
+    public func broadcastTransform(for entity: Entity, transform: SyncTransform, includeModel: Bool = false) {
         guard let syncComponent = entity.components[SyncComponent.self] else { return }
         
-        let modelComponent = entity.components[SyncModelComponent.self]
         let currentTime = Date().timeIntervalSince1970
+        let modelComponent = includeModel ? entity.components[SyncModelComponent.self] : nil
         
         print("Broadcasting transform for entity \(entity.name):")
         print("  Position: \(entity.transform.translation)")
         print("  Rotation: \(entity.transform.rotation.vector)")
         print("  Scale: \(entity.transform.scale)")
         print("  Sequence: \(syncComponent.sequenceNumber + 1)")
+        print("  Include Model: \(includeModel)")
         
         // Create sync data with current transform
         let syncData = SyncData(
@@ -142,21 +143,6 @@ public class EntityObservation {
             
             // Update transform immediately
             entity.transform = data.transform.realityKitTransform
-            
-            // Update model if needed
-           /* if let modelData = data.modelData {
-                var modelComponent = entity.components[SyncModelComponent.self] ?? SyncModelComponent()
-                modelComponent.modelData = modelData
-                entity.components[SyncModelComponent.self] = modelComponent
-                
-                Task { @MainActor in
-                    // Load model
-                    if let tempURL = createTemporaryURL(from: modelData),
-                       let model = try? ModelEntity.load(contentsOf: tempURL) {
-                        entity.addChild(model)
-                    }
-                }
-            }*/
         } else {
             print("Ignoring transform update - not newer")
         }
@@ -173,22 +159,21 @@ public class EntityObservation {
         )
         entity.components[SyncComponent.self] = syncComponent
         
-        // Add model component if data exists
+        // Set transform
+        entity.transform = data.transform.realityKitTransform
+        
+        print("Create new 3D model for entity \(syncComponent.id)")
+        // Add model if data exists - only load once during creation
         if let modelData = data.modelData {
-            var modelComponent = SyncModelComponent(modelData: modelData)
-            entity.components[SyncModelComponent.self] = modelComponent
-            
+            print("Found 3d model data")
             Task { @MainActor in
-                // Load model
                 if let tempURL = createTemporaryURL(from: modelData),
                    let model = try? ModelEntity.load(contentsOf: tempURL) {
                     entity.addChild(model)
+                    print("Loading new 3D model for entity \(syncComponent.id)")
                 }
             }
         }
-        
-        // Set transform
-        entity.transform = data.transform.realityKitTransform
         
         // Add to root
         rootEntity.addChild(entity)
@@ -199,22 +184,22 @@ public class EntityObservation {
         func searchInEntity(_ entity: Entity) -> Entity? {
             // Check if this entity has the matching ID
             if entity.components[SyncComponent.self]?.id == id {
-            return entity
-        }
-        
-            // Search in children
-        for child in entity.children {
-                if let found = searchInEntity(child) {
-                return found
+                return entity
             }
+            
+            // Search in children
+            for child in entity.children {
+                if let found = searchInEntity(child) {
+                    return found
+                }
+            }
+            
+            return nil
         }
-        
-        return nil
-    }
         
         return searchInEntity(rootEntity)
-}
-
+    }
+    
     // MARK: - Helper Methods
     
     private func createTemporaryURL(from data: Data) -> URL? {
