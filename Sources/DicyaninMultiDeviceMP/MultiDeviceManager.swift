@@ -10,16 +10,27 @@ public class MultiDeviceManager: NSObject, ObservableObject {
     private let logger = Logger(subsystem: "com.dicyanin.multidevice", category: "MultiDeviceManager")
     private let serviceType = "dicyanin"
     public let displayName: String
-    private var session: MCSession?
+    var session: MCSession?
     private var advertiser: MCNearbyServiceAdvertiser?
     private var browser: MCNearbyServiceBrowser?
-    private var entityObservation: EntityObservation?
+    public var entityObservation: EntityObservation?
+    private var connectionTimer: Timer?
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 5
     
     @Published public private(set) var connectedPeers: Set<MCPeerID> = []
     @Published public private(set) var isAdvertising = false
     @Published public private(set) var isBrowsing = false
     @Published public private(set) var isConnected = false
     @Published public private(set) var lastError: Error?
+    @Published public private(set) var connectionStatus: ConnectionStatus = .disconnected
+    
+    public enum ConnectionStatus {
+        case disconnected
+        case connecting
+        case connected
+        case error
+    }
     
     // MARK: - Initialization
     
@@ -27,6 +38,10 @@ public class MultiDeviceManager: NSObject, ObservableObject {
         self.displayName = displayName
         super.init()
         setupSession()
+    }
+    
+    public func getSession() -> MCSession? {
+        return session
     }
     
     // MARK: - Setup
@@ -43,9 +58,51 @@ public class MultiDeviceManager: NSObject, ObservableObject {
             // Automatically start advertising and browsing
             startAdvertising()
             startBrowsing()
+            
+            // Start connection monitoring
+            startConnectionMonitoring()
         } catch {
             logger.error("Failed to setup session: \(error.localizedDescription)")
             lastError = error
+            connectionStatus = .error
+        }
+    }
+    
+    private func startConnectionMonitoring() {
+        connectionTimer?.invalidate()
+        connectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.checkConnectionStatus()
+        }
+    }
+    
+    private func checkConnectionStatus() {
+        guard let session = session else { return }
+        
+        if session.connectedPeers.isEmpty && isConnected {
+            logger.warning("Lost connection to all peers")
+            connectionStatus = .disconnected
+            isConnected = false
+            
+            // Attempt to reconnect
+            if reconnectAttempts < maxReconnectAttempts {
+                reconnectAttempts += 1
+                logger.info("Attempting to reconnect (attempt \(self.reconnectAttempts))")
+                restartConnection()
+            } else {
+                logger.error("Max reconnection attempts reached")
+                connectionStatus = .error
+            }
+        }
+    }
+    
+    private func restartConnection() {
+        stopAdvertising()
+        stopBrowsing()
+        
+        // Wait a moment before restarting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.startAdvertising()
+            self?.startBrowsing()
         }
     }
     
@@ -71,6 +128,7 @@ public class MultiDeviceManager: NSObject, ObservableObject {
         } catch {
             logger.error("Failed to start advertising: \(error.localizedDescription)")
             lastError = error
+            connectionStatus = .error
         }
     }
     
@@ -97,6 +155,7 @@ public class MultiDeviceManager: NSObject, ObservableObject {
         } catch {
             logger.error("Failed to start browsing: \(error.localizedDescription)")
             lastError = error
+            connectionStatus = .error
         }
     }
     
@@ -129,11 +188,17 @@ public class MultiDeviceManager: NSObject, ObservableObject {
         
         do {
             try session.send(data, toPeers: session.connectedPeers, with: .reliable)
-            logger.debug("Sent data to \(session.connectedPeers.count) peers")
+            logger.info("Sent data to \(session.connectedPeers.count) peers")
         } catch {
             logger.error("Failed to send data: \(error.localizedDescription)")
             lastError = error
         }
+    }
+    
+    deinit {
+        connectionTimer?.invalidate()
+        stopAdvertising()
+        stopBrowsing()
     }
 }
 
@@ -142,7 +207,6 @@ public class MultiDeviceManager: NSObject, ObservableObject {
 extension MultiDeviceManager: MCSessionDelegate {
     public func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         logger.info("Peer \(peerID.displayName) changed state to: \(state.rawValue)")
-        logger.info("Current session state before change: \(session.connectedPeers.count) connected peers")
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -150,29 +214,29 @@ extension MultiDeviceManager: MCSessionDelegate {
             case .connected:
                 self.connectedPeers.insert(peerID)
                 self.isConnected = true
+                self.connectionStatus = .connected
+                self.reconnectAttempts = 0
                 self.logger.info("Successfully connected to peer: \(peerID.displayName)")
-                self.logger.info("Current connected peers count: \(self.connectedPeers.count)")
-                self.logger.info("Session connected peers: \(session.connectedPeers.map { $0.displayName })")
             case .connecting:
+                self.connectionStatus = .connecting
                 self.logger.info("Currently connecting to peer: \(peerID.displayName)")
-                self.logger.info("Session state during connection: \(session.connectedPeers.count) connected peers")
             case .notConnected:
                 self.connectedPeers.remove(peerID)
                 if self.connectedPeers.isEmpty {
                     self.isConnected = false
-                    self.logger.info("No peers connected, setting isConnected to false")
+                    self.connectionStatus = .disconnected
+                    self.logger.info("No peers connected")
                 }
                 self.logger.info("Disconnected from peer: \(peerID.displayName)")
-                self.logger.info("Remaining connected peers count: \(self.connectedPeers.count)")
-                self.logger.info("Session connected peers: \(session.connectedPeers.map { $0.displayName })")
             @unknown default:
                 self.logger.error("Unknown session state: \(state.rawValue)")
+                self.connectionStatus = .error
             }
         }
     }
     
     public func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        logger.debug("Received data from peer: \(peerID.displayName)")
+        logger.info("Received data from peer: \(peerID.displayName)")
         entityObservation?.handleReceivedData(data)
     }
     
@@ -206,21 +270,13 @@ extension MultiDeviceManager: MCNearbyServiceAdvertiserDelegate {
         }
         
         logger.info("Accepting invitation from peer: \(peerID.displayName)")
-        logger.info("Current session state: \(session.connectedPeers.count) connected peers")
-        
-        // Accept the invitation
         invitationHandler(true, session)
-        
-        // Log the session state after accepting
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.logger.info("Session state after accepting invitation: \(session.connectedPeers.count) connected peers")
-            self?.logger.info("Session state: \(session.myPeerID.displayName) is connected: \(session.connectedPeers.contains(peerID))")
-        }
     }
     
     public func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
         logger.error("Failed to start advertising: \(error.localizedDescription)")
         lastError = error
+        connectionStatus = .error
     }
 }
 
@@ -236,15 +292,7 @@ extension MultiDeviceManager: MCNearbyServiceBrowserDelegate {
         }
         
         logger.info("Sending invitation to peer: \(peerID.displayName)")
-        logger.info("Current session state: \(session.connectedPeers.count) connected peers")
-        
         browser.invitePeer(peerID, to: session, withContext: nil, timeout: 30)
-        
-        // Log the session state after sending invitation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.logger.info("Session state after sending invitation: \(session.connectedPeers.count) connected peers")
-            self?.logger.info("Session state: \(session.myPeerID.displayName) is connected: \(session.connectedPeers.contains(peerID))")
-        }
     }
     
     public func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
@@ -254,5 +302,6 @@ extension MultiDeviceManager: MCNearbyServiceBrowserDelegate {
     public func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         logger.error("Failed to start browsing: \(error.localizedDescription)")
         lastError = error
+        connectionStatus = .error
     }
 } 

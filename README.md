@@ -1,201 +1,183 @@
 # DicyaninMultiDeviceMP
 
-A Swift package for synchronizing RealityKit entities between visionOS and iOS devices using MultipeerConnectivity.
+A Swift package for synchronizing 3D content across multiple Apple devices using MultipeerConnectivity framework. This package provides the foundation for creating shared AR/VR experiences between visionOS and iOS devices.
 
 ## Features
 
-- 🔄 Automatic device discovery and connection
-- 🎯 Full transform synchronization (position, rotation, scale)
-- 🌐 Support for multiple entities
-- 📱 Compatible with both visionOS and iOS
-- 🎨 Easy-to-use SwiftUI views
-- 🔒 Secure encrypted connections
+- Real-time entity synchronization across devices
+- Support for 3D model data transfer
+- Automatic device discovery and connection management
+- Transform synchronization for interactive objects
+- Built on top of RealityKit and MultipeerConnectivity
 
 ## Installation
 
 ### Swift Package Manager
 
-Add the following to your `Package.swift` file:
+Add the package to your Xcode project:
 
-```swift
-dependencies: [
-    .package(url: "https://github.com/hunterh37/DicyaninMultiDeviceMP.git", from: "1.0.0")
-]
-```
-
-Or add it directly in Xcode:
-1. File > Add Packages...
-2. Enter the repository URL
+1. In Xcode, go to File > Add Packages...
+2. Enter the package repository URL
 3. Select the version you want to use
-
-## Required Privacy Permissions
-
-Add the following to your `Info.plist` file to enable MultipeerConnectivity:
-
-```xml
-<key>NSLocalNetworkUsageDescription</key>
-<string>This app uses the local network to discover and connect to nearby devices for multi-device synchronization.</string>
-<key>NSBonjourServices</key>
-<array>
-    <string>_dicyanin-multidevice._tcp</string>
-    <string>_dicyanin-multidevice._udp</string>
-</array>
-```
-
-These permissions are required for:
-- Device discovery
-- Local network communication
-- Service advertising
-- Peer-to-peer connections
+4. Click Add Package
 
 ## Usage
 
 ### Basic Setup
 
-First, import the package in your Swift file:
-
 ```swift
 import DicyaninMultiDeviceMP
-```
+import RealityKit
 
-### Using the SwiftUI Views
+// Create a manager instance
+let manager = MultiDeviceManager(displayName: "YourAppName")
 
-#### 1. Basic Connection View
-
-The simplest way to add multi-device support is to use the `MultiDeviceConnectionView`:
-
-```swift
-struct ContentView: View {
-    var body: some View {
-        MultiDeviceConnectionView(displayName: "MyApp")
-    }
-}
-```
-
-This will show a connection status indicator and list of connected devices.
-
-#### 2. RealityView Integration
-
-For apps using RealityKit, use the `MultiDeviceRealityView`. Here's a complete example:
-
-```swift
-struct ARContentView: View {
-    // Create your root entity
-    let rootEntity = Entity()
+// Set up your RealityView
+RealityView { content in
+    // Create a sync root entity
+    let syncRoot = Entity()
+    syncRoot.name = "SyncRoot"
+    syncRoot.components.set(SyncComponent(id: "SyncRoot"))
     
-    init() {
-        // Add some content to your root entity
-        let box = ModelEntity(mesh: .generateBox(size: 0.3))
-        box.position = SIMD3(x: 0, y: 1.5, z: -2)
-        rootEntity.addChild(box)
-    }
+    // Add your content
+    content.add(syncRoot)
     
-    var body: some View {
-        MultiDeviceRealityView(
-            displayName: "MyApp",
-            rootEntity: rootEntity
+    // Start observing
+    manager.startObserving(rootEntity: syncRoot)
+    
+    // Set up entity observation
+    if manager.entityObservation == nil {
+        manager.entityObservation = EntityObservation(
+            rootEntity: syncRoot,
+            onDataReceived: { data in
+                manager.entityObservation?.handleReceivedData(data)
+            }
         )
     }
 }
 ```
 
-#### 3. Custom Integration
-
-If you need more control, you can use the `MultiDeviceManager` directly:
+### Synchronizing Entities
 
 ```swift
-class YourViewModel: ObservableObject {
-    private let manager = MultiDeviceManager(displayName: "MyApp")
-    private let rootEntity = Entity()
-    
-    init() {
-        // Add your content
-        let box = ModelEntity(mesh: .generateBox(size: 0.3))
-        box.position = SIMD3(x: 0, y: 1.5, z: -2)
-        rootEntity.addChild(box)
-        
-        // Start observing
-        manager.startObserving(rootEntity: rootEntity)
-    }
+// Create an entity with sync components
+let entity = Entity()
+entity.name = "MyEntity"
+
+// Add sync component
+let syncId = "Entity_\(UUID().uuidString)"
+entity.components.set(SyncComponent(id: syncId))
+
+// Add model sync component if needed
+if let modelData = try? Data(contentsOf: modelURL) {
+    entity.components.set(SyncModelComponent(modelData: modelData))
+}
+
+// Add to your scene
+rootEntity.addChild(entity)
+
+// Broadcast updates
+if let entityObservation = manager.entityObservation {
+    let transform = SyncTransform(from: entity.transform)
+    entityObservation.broadcastTransform(for: entity, transform: transform)
 }
 ```
 
-### Example: Complete App Integration
-
-Here's a complete example showing how to integrate the package into a visionOS/iOS app:
+### Connection Management
 
 ```swift
-import SwiftUI
-import RealityKit
-import DicyaninMultiDeviceMP
+// Add the connection view to your SwiftUI view
+MultiDeviceConnectionView(displayName: "YourAppName")
+    .background(.ultraThinMaterial)
 
-struct ContentView: View {
-    // Create your root entity
-    let rootEntity = Entity()
-    
-    init() {
-        // Add some 3D content
-        let box = ModelEntity(mesh: .generateBox(size: 0.3))
-        box.position = SIMD3(x: 0, y: 1.5, z: -2)
-        rootEntity.addChild(box)
-    }
-    
-    var body: some View {
-        ZStack {
-            // Your 3D content
-            RealityView { content in
-                // Create a sync root entity
-                let syncRoot = Entity()
-                syncRoot.name = "SyncRoot"
-                
-                // Add your content as a child
-                syncRoot.addChild(rootEntity)
-                
-                // Add to the scene
-                content.add(syncRoot)
-            }
-            
-            // Multi-device connection UI
-            VStack {
-                Spacer()
-                MultiDeviceConnectionView(displayName: "MyApp")
-                    .background(.ultraThinMaterial)
-            }
-        }
-    }
+// Monitor connection state
+.onChange(of: manager.isConnected) { newValue in
+    print("Connection state: \(newValue)")
+}
+.onChange(of: manager.connectedPeers) { newPeers in
+    print("Connected peers: \(newPeers.count)")
 }
 ```
 
-### Settings View
+## Components
 
-The package includes a settings view that can be presented as a sheet:
+### MultiDeviceManager
+
+The main class that handles device discovery and connection management.
 
 ```swift
-struct ContentView: View {
-    @State private var isShowingSettings = false
-    @StateObject private var manager = MultiDeviceManager(displayName: "MyApp")
+class MultiDeviceManager {
+    var isConnected: Bool
+    var connectedPeers: [MCPeerID]
+    var entityObservation: EntityObservation?
     
-    var body: some View {
-        Button("Settings") {
-            isShowingSettings.toggle()
-        }
-        .sheet(isPresented: $isShowingSettings) {
-            MultiDeviceSettingsView(manager: manager)
-        }
-    }
+    func startObserving(rootEntity: Entity)
+    func stopObserving()
 }
 ```
+
+### EntityObservation
+
+Manages entity synchronization across devices.
+
+```swift
+class EntityObservation {
+    func broadcastTransform(for entity: Entity, transform: SyncTransform)
+    func handleReceivedData(_ data: Data)
+}
+```
+
+### SyncComponent
+
+Tracks entity state and updates.
+
+```swift
+struct SyncComponent: Component {
+    var id: String
+    var timestamp: TimeInterval
+    var sequenceNumber: Int
+}
+```
+
+### SyncModelComponent
+
+Handles 3D model data synchronization.
+
+```swift
+struct SyncModelComponent: Component {
+    var modelURL: URL?
+    var modelData: Data?
+}
+```
+
+## Best Practices
+
+1. **Entity Naming**
+   - Use unique names for entities
+   - Include UUID in sync IDs to prevent conflicts
+
+2. **Model Synchronization**
+   - Always include model data when adding new 3D models
+   - Use appropriate collision shapes for interaction
+
+3. **Connection Management**
+   - Handle connection state changes appropriately
+   - Provide user feedback for connection status
+
+4. **Performance**
+   - Only broadcast transform updates when necessary
+   - Use appropriate update frequency for your use case
 
 ## Requirements
 
-- iOS 15.0+
+- iOS 17.0+
 - visionOS 1.0+
-- Xcode 15.0+
 - Swift 5.9+
+- Xcode 15.0+
 
 ## License
 
-This package is available under the MIT license. See the LICENSE file for more info.
+This package is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contributing
 

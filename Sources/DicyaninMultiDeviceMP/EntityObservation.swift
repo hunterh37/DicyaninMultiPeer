@@ -2,43 +2,64 @@ import Foundation
 import RealityKit
 import Combine
 
-class EntityObservation {
+// MARK: - ECS Components
+
+public struct SyncComponent: Component {
+    public var id: String
+    public var timestamp: TimeInterval
+    public var sequenceNumber: Int
+    
+    public init(id: String, timestamp: TimeInterval = Date().timeIntervalSince1970, sequenceNumber: Int = 0) {
+        self.id = id
+        self.timestamp = timestamp
+        self.sequenceNumber = sequenceNumber
+    }
+}
+
+public struct SyncModelComponent: Component {
+    public var modelURL: URL?
+    public var modelData: Data?
+    
+    public init(modelURL: URL? = nil, modelData: Data? = nil) {
+        self.modelURL = modelURL
+        self.modelData = modelData
+    }
+}
+
+// MARK: - Entity Observation
+
+public class EntityObservation {
     private let rootEntity: Entity
     private let onDataReceived: (Data) -> Void
     private var entityObservers: [Entity: AnyCancellable] = [:]
-    private var transformUpdateTimer: Timer?
+    private let stateQueue = DispatchQueue(label: "com.dicyanin.entityobservation.state", qos: .userInitiated)
     
-    init(rootEntity: Entity, onDataReceived: @escaping (Data) -> Void) {
+    public init(rootEntity: Entity, onDataReceived: @escaping (Data) -> Void) {
         self.rootEntity = rootEntity
         self.onDataReceived = onDataReceived
         observeEntity(rootEntity)
-        startTransformUpdateTimer()
+        
+        SyncComponent.registerComponent()
+        SyncModelComponent.registerComponent()
     }
     
     deinit {
-        transformUpdateTimer?.invalidate()
+        // Cleanup if needed
     }
     
-    private func startTransformUpdateTimer() {
-        transformUpdateTimer?.invalidate()
-        transformUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            self?.updateAndBroadcastTransforms()
-        }
-    }
-    
-    private func updateAndBroadcastTransforms() {
-        updateEntityTransforms(rootEntity)
-    }
-    
-    private func updateEntityTransforms(_ entity: Entity) {
-        broadcastTransform(for: entity, transform: entity.transform)
-        
-        for child in entity.children {
-            updateEntityTransforms(child)
-        }
-    }
+    // MARK: - Private Methods
     
     private func observeEntity(_ entity: Entity) {
+        // Add sync component if not present
+        if entity.components[SyncComponent.self] == nil {
+            // Ensure entity has a name
+            if entity.name.isEmpty {
+                entity.name = "Entity_\(UUID().uuidString)"
+            }
+            var syncComponent = SyncComponent(id: entity.name)
+            entity.components[SyncComponent.self] = syncComponent
+        }
+        
         // Store reference to entity for periodic updates
         entityObservers[entity] = AnyCancellable {
             // Cleanup if needed
@@ -50,88 +71,207 @@ class EntityObservation {
         }
     }
     
-    private func broadcastTransform(for entity: Entity, transform: Transform) {
-        let transformData = TransformData(
-            entityName: entity.name,
-            position: transform.translation,
-            rotation: transform.rotation,
-            scale: transform.scale
+    public func broadcastTransform(for entity: Entity, transform: SyncTransform) {
+        guard let syncComponent = entity.components[SyncComponent.self] else { return }
+        
+        let modelComponent = entity.components[SyncModelComponent.self]
+        let currentTime = Date().timeIntervalSince1970
+        
+        print("Broadcasting transform for entity \(entity.name):")
+        print("  Position: \(entity.transform.translation)")
+        print("  Rotation: \(entity.transform.rotation.vector)")
+        print("  Scale: \(entity.transform.scale)")
+        print("  Sequence: \(syncComponent.sequenceNumber + 1)")
+        
+        // Create sync data with current transform
+        let syncData = SyncData(
+            id: syncComponent.id,
+            timestamp: currentTime,
+            sequenceNumber: syncComponent.sequenceNumber + 1,
+            transform: SyncTransform(from: entity.transform),
+            modelData: modelComponent?.modelData,
+            modelURL: modelComponent?.modelURL
         )
         
         do {
-            let data = try JSONEncoder().encode(transformData)
+            let data = try JSONEncoder().encode(syncData)
             onDataReceived(data)
         } catch {
             print("Error broadcasting transform: \(error)")
         }
     }
     
-    func handleReceivedData(_ data: Data) {
+    public func handleReceivedData(_ data: Data) {
         do {
-            let transformData = try JSONDecoder().decode(TransformData.self, from: data)
-            updateEntityTransform(transformData)
+            let syncData = try JSONDecoder().decode(SyncData.self, from: data)
+            handleSyncData(syncData)
         } catch {
-            print("Error receiving transform data: \(error)")
+            print("Error decoding sync data: \(error)")
         }
     }
     
-    private func updateEntityTransform(_ data: TransformData) {
-        // Find the entity by name in the hierarchy
-        if let entity = findEntity(named: data.entityName, in: rootEntity) {
-            DispatchQueue.main.async {
-                entity.transform = Transform(
-                    scale: data.scale,
-                    rotation: data.rotation.quaternion,
-                    translation: data.position
-                )
+    private func handleSyncData(_ data: SyncData) {
+        if let existingEntity = findEntity(withId: data.id) {
+            updateExistingEntity(existingEntity, with: data)
+        } else {
+            createNewEntity(from: data)
+        }
+    }
+    
+    private func updateExistingEntity(_ entity: Entity, with data: SyncData) {
+        guard var syncComponent = entity.components[SyncComponent.self] else { return }
+        
+        print("Received transform update for entity \(syncComponent.id):")
+        print("  Current timestamp: \(syncComponent.timestamp)")
+        print("  New timestamp: \(data.timestamp)")
+        print("  Current sequence: \(syncComponent.sequenceNumber)")
+        print("  New sequence: \(data.sequenceNumber)")
+        
+        // Only update if data is newer or has higher sequence number
+        let shouldUpdate = data.timestamp > syncComponent.timestamp || 
+                          (data.timestamp == syncComponent.timestamp && data.sequenceNumber > syncComponent.sequenceNumber)
+        
+        if shouldUpdate {
+            print("Applying transform update:")
+            print("  Old position: \(entity.transform.translation)")
+            print("  New position: \(data.transform.translation)")
+            
+            syncComponent.timestamp = data.timestamp
+            syncComponent.sequenceNumber = data.sequenceNumber
+            entity.components[SyncComponent.self] = syncComponent
+            
+            // Update transform immediately
+            entity.transform = data.transform.realityKitTransform
+            
+            // Update model if needed
+           /* if let modelData = data.modelData {
+                var modelComponent = entity.components[SyncModelComponent.self] ?? SyncModelComponent()
+                modelComponent.modelData = modelData
+                entity.components[SyncModelComponent.self] = modelComponent
+                
+                Task { @MainActor in
+                    // Load model
+                    if let tempURL = createTemporaryURL(from: modelData),
+                       let model = try? ModelEntity.load(contentsOf: tempURL) {
+                        entity.addChild(model)
+                    }
+                }
+            }*/
+        } else {
+            print("Ignoring transform update - not newer")
+        }
+    }
+    
+    private func createNewEntity(from data: SyncData) {
+        let entity = Entity()
+        
+        // Add sync component
+        let syncComponent = SyncComponent(
+            id: data.id,
+            timestamp: data.timestamp,
+            sequenceNumber: data.sequenceNumber
+        )
+        entity.components[SyncComponent.self] = syncComponent
+        
+        // Add model component if data exists
+        if let modelData = data.modelData {
+            var modelComponent = SyncModelComponent(modelData: modelData)
+            entity.components[SyncModelComponent.self] = modelComponent
+            
+            Task { @MainActor in
+                // Load model
+                if let tempURL = createTemporaryURL(from: modelData),
+                   let model = try? ModelEntity.load(contentsOf: tempURL) {
+                    entity.addChild(model)
+                }
             }
         }
+        
+        // Set transform
+        entity.transform = data.transform.realityKitTransform
+        
+        // Add to root
+        rootEntity.addChild(entity)
     }
     
-    private func findEntity(named name: String, in entity: Entity) -> Entity? {
-        if entity.name == name {
+    private func findEntity(withId id: String) -> Entity? {
+        // Search recursively through all children
+        func searchInEntity(_ entity: Entity) -> Entity? {
+            // Check if this entity has the matching ID
+            if entity.components[SyncComponent.self]?.id == id {
             return entity
         }
         
+            // Search in children
         for child in entity.children {
-            if let found = findEntity(named: name, in: child) {
+                if let found = searchInEntity(child) {
                 return found
             }
         }
         
         return nil
     }
+        
+        return searchInEntity(rootEntity)
+}
+
+    // MARK: - Helper Methods
+    
+    private func createTemporaryURL(from data: Data) -> URL? {
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFile = tempDir.appendingPathComponent(UUID().uuidString + ".usdz")
+        
+        do {
+            try data.write(to: tempFile)
+            return tempFile
+        } catch {
+            print("Error creating temporary file: \(error)")
+            return nil
+        }
+    }
 }
 
 // MARK: - Supporting Types
-private struct CodableQuaternion: Codable {
-    let x: Float
-    let y: Float
-    let z: Float
-    let w: Float
+
+public struct SyncData: Codable {
+    public let id: String
+    public let timestamp: TimeInterval
+    public let sequenceNumber: Int
+    public let transform: SyncTransform
+    public let modelData: Data?
+    public let modelURL: URL?
     
-    init(quaternion: simd_quatf) {
-        self.x = quaternion.vector.x
-        self.y = quaternion.vector.y
-        self.z = quaternion.vector.z
-        self.w = quaternion.vector.w
-    }
-    
-    var quaternion: simd_quatf {
-        simd_quatf(vector: SIMD4<Float>(x, y, z, w))
+    public init(id: String, timestamp: TimeInterval, sequenceNumber: Int, transform: SyncTransform, modelData: Data?, modelURL: URL?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.sequenceNumber = sequenceNumber
+        self.transform = transform
+        self.modelData = modelData
+        self.modelURL = modelURL
     }
 }
 
-private struct TransformData: Codable {
-    let entityName: String
-    let position: SIMD3<Float>
-    let rotation: CodableQuaternion
-    let scale: SIMD3<Float>
+public struct SyncTransform: Codable {
+    public let translation: SIMD3<Float>
+    public let rotation: SIMD4<Float>
+    public let scale: SIMD3<Float>
     
-    init(entityName: String, position: SIMD3<Float>, rotation: simd_quatf, scale: SIMD3<Float>) {
-        self.entityName = entityName
-        self.position = position
-        self.rotation = CodableQuaternion(quaternion: rotation)
-        self.scale = scale
+    public init(from realityKitTransform: RealityKit.Transform) {
+        self.translation = realityKitTransform.translation
+        self.rotation = SIMD4<Float>(
+            realityKitTransform.rotation.vector.x,
+            realityKitTransform.rotation.vector.y,
+            realityKitTransform.rotation.vector.z,
+            realityKitTransform.rotation.vector.w
+        )
+        self.scale = realityKitTransform.scale
+    }
+    
+    public var realityKitTransform: RealityKit.Transform {
+        RealityKit.Transform(
+            scale: scale,
+            rotation: simd_quatf(vector: rotation),
+            translation: translation
+        )
     }
 } 
