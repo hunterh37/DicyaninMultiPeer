@@ -2,23 +2,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "DicyaninMultiDeviceMP",
+    name: "DicyaninMultiPeer",
     platforms: [
         .iOS(.v15),
         .visionOS(.v1)
     ],
     products: [
         .library(
-            name: "DicyaninMultiDeviceMP",
-            targets: ["DicyaninMultiDeviceMP"]),
+            name: "DicyaninMultiPeer",
+            targets: ["DicyaninMultiPeer"]),
     ],
     dependencies: [],
     targets: [
         .target(
-            name: "DicyaninMultiDeviceMP",
+            name: "DicyaninMultiPeer",
             dependencies: []),
         .testTarget(
-            name: "DicyaninMultiDeviceMPTests",
-            dependencies: ["DicyaninMultiDeviceMP"]),
+            name: "DicyaninMultiPeerTests",
+            dependencies: ["DicyaninMultiPeer"]),
     ]
 ) 

@@ -1,4 +1,4 @@
-# DicyaninMultiDeviceMP 🎮 🔄 🌐
+# DicyaninMultiPeer 🎮 🔄 🌐
 
 > Create stunning multi-device AR/VR experiences with ease! This powerful Swift package enables seamless synchronization of 3D content across Apple devices, making it perfect for collaborative AR applications, interactive presentations, and immersive multi-user experiences. Built on top of RealityKit and MultipeerConnectivity, it handles all the complex networking and synchronization logic so you can focus on creating amazing experiences. 🚀
 
@@ -28,7 +28,7 @@ Add the package to your Xcode project:
 ### Basic Setup
 
 ```swift
-import DicyaninMultiDeviceMP
+import DicyaninMultiPeer
 import RealityKit
 
 // Create a manager instance
