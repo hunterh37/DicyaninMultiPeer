@@ -296,4 +296,4 @@ Hunter Harris
 - GitHub: [@hunterh37](https://github.com/hunterh37)
 - Website: [dicyaninlabs.com](https://dicyaninlabs.com)
 
-![visionOS Swift Package by Dicyanin Labs](assets/banner2.png) 
+![visionOS Swift Package by Dicyanin Labs](assets/banner3.png) 
