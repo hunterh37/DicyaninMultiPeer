@@ -257,6 +257,24 @@ struct SyncModelComponent: Component {
    - Only broadcast transform updates when necessary
    - Use appropriate update frequency for your use case
 
+## Info.plist Configuration
+
+To enable MultipeerConnectivity in your app, you must add the following keys to your app's Info.plist file:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app uses the local network to connect and synchronize 3D content with other devices.</string>
+<key>NSBonjourServices</key>
+<array>
+    <string>_your-service-type._tcp</string>
+</array>
+```
+
+- **NSLocalNetworkUsageDescription**: Explains to users why your app needs access to the local network.
+- **NSBonjourServices**: Lists the Bonjour service types your app will use (replace `_your-service-type._tcp` with your actual service type, e.g., `_dicyaninmp._tcp`).
+
+Without these entries, your app will not be able to discover or connect to other devices on the local network.
+
 ## Requirements
 
 - iOS 17.0+
@@ -276,4 +294,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 Hunter Harris
 - GitHub: [@hunterh37](https://github.com/hunterh37)
-- Website: [dicyaninlabs.com](https://dicyaninlabs.com) 
+- Website: [dicyaninlabs.com](https://dicyaninlabs.com)
+
+![visionOS Swift Package by Dicyanin Labs](assets/banner2.png) 
